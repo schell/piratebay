@@ -20,16 +20,35 @@ impl PirateClient {
         let client: Client = Config::new()
             .set_base_url(Url::parse(BASE_URL).unwrap())
             .set_timeout(Some(Duration::from_secs(60)))
+            .add_header(
+                "User-Agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:150.0) Gecko/20100101 Firefox/150.0",
+            )
+            .unwrap()
             .try_into()
             .unwrap();
         Self { client }
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<Torrent>, surf::Error> {
-        self.client
-            .get(format!("/q.php?q={}", query))
-            .recv_json()
-            .await
+        log::info!("search query='{query}'");
+        let mut response = self.client.get(format!("/q.php?q={}", query)).await?;
+        let status = response.status();
+        if !status.is_success() {
+            let msg = if status == 429 {
+                "Too many requests - please wait a moment and try again".to_string()
+            } else {
+                format!("Search failed: HTTP {status}")
+            };
+            log::error!("{msg}");
+            return Err(surf::Error::from_str(status, msg));
+        }
+        let s = response.body_string().await?;
+        log::info!("got string: {s}");
+        match serde_json::from_str(&s) {
+            Ok(t) => Ok(t),
+            Err(e) => Err(surf::Error::from_display(format!("{s}\n{e}"))),
+        }
     }
 
     pub async fn list_audio(&self) -> Result<Vec<Torrent>, surf::Error> {
